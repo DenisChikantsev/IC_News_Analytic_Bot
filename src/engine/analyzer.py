@@ -51,8 +51,8 @@ def run_full_analysis():
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         digest_path = OUTPUT_DIR / f"digest_for_gemini_{timestamp}.txt"
-        # with open(digest_path, "w", encoding='utf-8') as f:
-        #     f.write(digest)
+        with open(digest_path, "w", encoding='utf-8') as f:
+            f.write(digest)
         logger.info(f"Дайджест сохранен в файл '{digest_path}'")
 
         # --- Этап 3: Двухэтапный анализ в Gemini ---
