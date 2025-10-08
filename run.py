@@ -18,7 +18,7 @@ def run_bot_polling():
     logger.info("Запуск Telegram-бота (polling)...")
     try:
         # non_stop=True говорит боту не останавливаться при ошибках
-        bot.polling(non_stop=True)
+        bot.polling(non_stop=True, allowed_updates=True)
     except Exception as e:
         logger.critical(f"Polling остановлен с критической ошибкой: {e}", exc_info=True)
 

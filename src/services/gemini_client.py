@@ -1,10 +1,8 @@
-# src/services/gemini_client.py
 import re
 import logging
 import google.genai as genai
-# Используем правильные, явные импорты из твоего примера
 from google.genai.types import Tool, GoogleSearch, GenerateContentConfig
-from src.config import GEMINI_API_KEY, prompt_1
+from src.config import GEMINI_API_KEY, USA_STOCKS_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +35,6 @@ class GeminiClient:
         """Приватный метод для выполнения запроса к Gemini."""
         logger.info("Отправка запроса в Gemini... (Это может занять некоторое время)")
         try:
-            # 5. Передаем нашу конфигурацию в метод generate_content,
-            #    вызывая его через self.client.models, как в твоем примере.
             response = self.client.models.generate_content(
                 model=self.model_name,
                 contents=prompt,
@@ -55,9 +51,8 @@ class GeminiClient:
     def _parse_stage1_tickers(self, analysis_text: str) -> list[str]:
         """
         Извлекает тикеры из блока 'ЗАПРОС НА ВТОРОЙ ЭТАП'.
-        Сначала ищет нумерованный список, затем - формат в скобках.
+        Поддерживает нумерованные списки, списки с маркерами (* или -) и списки в скобках.
         """
-        # 1. Находим всю секцию "ЗАПРОС НА ВТОРОЙ ЭТАП"
         section_match = re.search(r"ЗАПРОС НА ВТОРОЙ ЭТАП:.*", analysis_text, re.IGNORECASE | re.DOTALL)
         if not section_match:
             logger.warning("Не удалось найти секцию 'ЗАПРОС НА ВТОРОЙ ЭТАП'.")
@@ -65,19 +60,23 @@ class GeminiClient:
 
         section_text = section_match.group(0)
 
-        # 2. Ищем тикеры в формате нумерованного списка, например: "1. **AMD**"
-        tickers = re.findall(r"\d+\.\s*\*\*(.*?)\*\*", section_text)
+        tickers = re.findall(r"[\*\-]\s*\*?([A-Z]{1,5})\*?", section_text)
         if tickers:
             tickers = [t.strip() for t in tickers]
-            logger.info(f"Найдены тикеры для 2-го этапа (формат списка): {tickers}")
+            logger.info(f"Найдены тикеры для 2-го этапа (формат списка с маркерами): {tickers}")
             return tickers
 
-        # 3. Если формат списка не найден, пробуем старый формат в скобках: "(AMD, GLD, MSTR)"
+        # Затем ищем нумерованные списки
+        tickers = re.findall(r"\d+\.\s*\*?([A-Z]{1,5})\*?", section_text)
+        if tickers:
+            tickers = [t.strip() for t in tickers]
+            logger.info(f"Найдены тикеры для 2-го этапа (формат нумерованного списка): {tickers}")
+            return tickers
+
+        # Резервный вариант: ищем формат в скобках
         match = re.search(r"\((.*?)\)", section_text, re.IGNORECASE | re.DOTALL)
         if match:
             tickers_str = match.group(1)
-            # Этот вариант может содержать лишний текст, поэтому очищаем его
-            # и ищем только слова в верхнем регистре.
             potential_tickers = [t.strip() for t in tickers_str.split(',')]
             tickers = [t for t in potential_tickers if re.fullmatch(r'[A-Z]{1,5}', t)]
             if tickers:
@@ -123,7 +122,7 @@ class GeminiClient:
                         **Тикер: [Тикер 1]**
                         *   **Технические данные:** Цена: [значение], MA50: [значение], MA200: [значение], RSI: [значение]
                         *   **Рекомендация:** [Твоя краткая рекомендация и уровни]
-                        *   **Срок реализации:**  [Какое время удерживать ценную бумагу]
+                        *   **Срок реализации:** [Краткосрочный/Среднесрочный/Долгосрочный]
 
                         **Тикер: [Тикер 2]**
                         ... и так далее.
@@ -131,29 +130,29 @@ class GeminiClient:
         prompt_parts.append(task_prompt)
         return "\n".join(prompt_parts)
 
-    def run_two_stage_analysis(self, digest: str) -> str:
-        """Выполняет полный двухэтапный анализ: фундаментальный, затем технический."""
+    def run_two_stage_analysis(self, digest: str, prompt_template: str) -> dict[str, str]:
+        """
+        Выполняет полный двухэтапный анализ и возвращает результат в виде словаря.
+        Возвращает: {"stage1": "текст первого этапа", "stage2": "текст второго этапа"}
+        """
         logger.info("--- Запуск 1-го этапа анализа (фундаментальный) ---")
-        stage1_prompt = prompt_1.replace("[Вставь полный дайджест новостей]", digest)
+        stage1_prompt = prompt_template.replace("[Вставь полный дайджест новостей]", digest)
         analysis_part_1 = self._execute_analysis(stage1_prompt)
 
         if "[Ошибка" in analysis_part_1:
-            return analysis_part_1
+            return {"stage1": analysis_part_1, "stage2": ""}
 
         tickers = self._parse_stage1_tickers(analysis_part_1)
         analysis_block = self._parse_stage1_analysis_block(analysis_part_1)
 
         if not tickers or not analysis_block:
             logger.warning("Не удалось извлечь данные для 2-го этапа. Возвращаю только 1-й этап.")
-            return analysis_part_1
+            # ИЗМЕНЕНИЕ: Возвращаем словарь, но вторая часть пустая.
+            return {"stage1": analysis_part_1, "stage2": ""}
 
         logger.info("--- Запуск 2-го этапа анализа (технический) ---")
         stage2_prompt = self._construct_stage2_prompt(tickers, analysis_block)
         analysis_part_2 = self._execute_analysis(stage2_prompt)
 
-        final_report = (
-            f"{analysis_part_1}\n\n"
-            "========================================\n"
-            f"{analysis_part_2}"
-        )
-        return final_report
+        # ИЗМЕНЕНИЕ: Возвращаем словарь с двумя частями.
+        return {"stage1": analysis_part_1, "stage2": analysis_part_2}
