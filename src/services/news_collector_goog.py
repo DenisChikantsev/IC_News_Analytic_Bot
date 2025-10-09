@@ -10,7 +10,7 @@ def gather_strategic_news(topics: list[str]) -> list[dict]:
     Собирает новости по списку тем, используя только заголовки и описания из GNews.
     """
     logger.info("Инициализация GNews...")
-    gnews_instance = GNews(language='en', country='US', period='24h')
+    gnews_instance = GNews(language='en', country='US', period='12h')
 
     all_articles = []
     seen_urls = set()
@@ -57,7 +57,7 @@ def prepare_digest_for_ai(articles: list) -> str:
         digest_parts.append(f"\n--- Статья #{i + 1} ---\n")
         digest_parts.append(f"Источник: {article['publisher']}\n")
         digest_parts.append(f"Заголовок: {article['title']}\n")
-        digest_parts.append("ТЕКСТ (краткое описание):\n")
+        digest_parts.append("Краткий текст:\n")
         digest_parts.append(article['text'])
 
     return "".join(digest_parts)

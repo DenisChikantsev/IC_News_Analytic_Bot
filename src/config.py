@@ -97,7 +97,7 @@ CRYPTO_PROMPT = """
 3.  **АНАЛИЗ И ТЕЗИСЫ:** (Краткое описание **всех** тем и тезисы для **всех** тикеров. Общий объем **НЕ БОЛЕЕ 1000 символов**.)
     * **Нарратив 1:** [Краткое описание] -> [Тикер 1]: [Тезис]; [Тикер 2]: [Тезис]
     * **Нарратив 2:** [Краткое описание] -> [Тикер 3]: [Тезис]; [Тикер 4]: [Тезис]
-4.  **ЗАПРОС НА ВТОРОЙ ЭТАП:** [4-5 Тикеров для ТА]
+4.  **ЗАПРОС НА ВТОРОЙ ЭТАП:** [4-5 Тикеров для Технического Анализа]
 ---
 *Новостные данные:* [Вставь полный дайджест новостей]
 """
@@ -107,20 +107,33 @@ TOPIC_CONFIGS = {
         "id": os.getenv("USA_STOCKS_ID"),
         "prompt": USA_STOCKS_PROMPT,
         "news_source": "google",
-        "news_topics": ['WORLD','BUSINESS','TECHNOLOGY',
-                        'ECONOMY','FINANCE','ENERGY']
+        "news_topics": ['WORLD','BUSINESS','TECHNOLOGY', 'ECONOMY','FINANCE','ENERGY'],
+        # Ключи для парсинга
+        "parsing_keys": {
+            "analysis_section": "АНАЛИЗ И ТЕЗИСЫ",
+            "tickers_section": "ЗАПРОС НА ВТОРОЙ ЭТАП"
+        }
     },
-    # Пример, как можно будет добавить другие анализы:
     "CRYPTO": {
         "id": os.getenv("CRYPTO_ID"),
         "prompt": CRYPTO_PROMPT,
         "news_source": "google",
-        "news_topics": ['CRYPTOCURRENCIES', 'BITCOIN', 'ETHEREUM']
+        "news_topics": ['CRYPTOCURRENCIES', 'BITCOIN', 'ETHEREUM'],
+        # Ключи для парсинга
+        "parsing_keys": {
+            "analysis_section": "АНАЛИЗ И ТЕЗИСЫ",
+            "tickers_section": "ЗАПРОС НА ВТОРОЙ ЭТАП"
+        }
     },
     "CURRENCY": {
         "id": os.getenv("CURRENCY_ID"),
         "prompt": CURRENCY_PROMPT,
         "news_source": "google",
-        "news_topics": ['FOREX', 'CURRENCY']
+        "news_topics": ['FOREX', 'CURRENCY'],
+        # Ключи для парсинга
+        "parsing_keys": {
+            "analysis_section": "АНАЛИЗ СИЛЫ ВАЛЮТ",
+            "tickers_section": "ЗАПРОС НА ВТОРОЙ ЭТАП"
+        }
     }
 }

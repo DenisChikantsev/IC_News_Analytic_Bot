@@ -2,7 +2,7 @@ import logging
 import sys
 from datetime import datetime
 from src.services.gemini_client import GeminiClient
-from src.config import OUTPUT_DIR, TOPIC_CONFIGS # Убедимся, что импортируем TOPIC_CONFIGS
+from src.config import OUTPUT_DIR, TOPIC_CONFIGS
 from src.services.news_collector_goog import gather_strategic_news, prepare_digest_for_ai
 
 logging.basicConfig(
@@ -12,70 +12,57 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
 def run_full_analysis(analysis_config: dict) -> str:
     """
-    Полный цикл: сбор новостей, анализ и возврат ТОЛЬКО второй (технической) части.
-    При этом полный отчет сохраняется в файл.
+    Выполняет полный цикл анализа: сбор новостей, двухэтапный анализ Gemini
+    и сохранение результата.
     """
     try:
-        news_source = analysis_config['news_source']
-        news_topics = analysis_config['news_topics']
-        prompt_template = analysis_config['prompt']
+        news_topics = analysis_config.get("news_topics", [])
+        prompt_template = analysis_config.get("prompt")
 
-        # --- Этап 1: Сбор новостей ---
-        logger.info(f"--- Этап 1: Сбор новостей из {news_source} по темам: {news_topics} ---")
-        articles = gather_strategic_news(topics=news_topics)
+        if not prompt_template:
+            raise ValueError("Шаблон промпта не найден в конфигурации.")
 
-        if not articles:
-            warning_msg = "Не удалось собрать новости. Анализ прерван."
-            logger.warning(warning_msg)
-            return warning_msg
+        logger.info(f"Сбор новостей по темам: {news_topics}")
+        news = gather_strategic_news(topics=news_topics)
+        digest = prepare_digest_for_ai(news)
 
-        logger.info(f"--- Собрано {len(articles)} уникальных статей. ---")
-
-        # --- Этап 2: Подготовка дайджеста для AI ---
-        logger.info("--- Этап 2: Подготовка дайджеста для AI ---")
-        digest = prepare_digest_for_ai(articles)
-
-        # --- Этап 3: Двухэтапный анализ в Gemini ---
-        logger.info("--- Этап 3: Анализ в Gemini ---")
         client = GeminiClient()
-        # ИЗМЕНЕНИЕ: Получаем словарь с частями анализа
-        analysis_parts = client.run_two_stage_analysis(digest=digest, prompt_template=prompt_template)
 
-        stage1_report = analysis_parts.get("stage1", "[ОШИБКА: Первая часть анализа отсутствует]")
-        stage2_report = analysis_parts.get("stage2", "") # По умолчанию пустая строка
-
-        # ИЗМЕНЕНИЕ: Собираем полный отчет для сохранения в файл
-        full_report = (
-            f"{stage1_report}\n\n"
-            "========================================\n"
-            f"{stage2_report}" if stage2_report else stage1_report
+        # --- ИЗМЕНЕНИЕ: Передаем `parsing_keys` в метод анализа ---
+        analysis_parts = client.run_two_stage_analysis(
+            digest=digest,
+            prompt_template=prompt_template,
+            parsing_keys=analysis_config.get("parsing_keys", {})
         )
 
-        logger.info("\n\n--- ГОТОВЫЙ АНАЛИЗ ОТ GEMINI (ПОЛНЫЙ) ---")
-        for line in full_report.splitlines():
-            logger.info(line)
+        # Собираем полный отчет для сохранения в файл
+        full_report_text = analysis_parts.get("stage1", "")
+        if analysis_parts.get("stage2"):
+            full_report_text += "\n\n" + analysis_parts.get("stage2")
 
+        # Сохранение полного отчета в файл
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        analysis_path = OUTPUT_DIR / f"gemini_analysis_{timestamp}.txt"
-        with open(analysis_path, "w", encoding='utf-8') as f:
-            f.write(full_report)
-        logger.info(f"--- Полный анализ сохранен в файл '{analysis_path}' ---")
+        output_file = OUTPUT_DIR / f"gemini_analysis_{timestamp}.txt"
+        with open(output_file, "w", encoding="utf-8") as f:
+            f.write(full_report_text)
+        logger.info(f"--- Полный анализ сохранен в файл '{output_file}' ---")
 
-        # ИЗМЕНЕНИЕ: Возвращаем только вторую часть для отправки в Telegram
-        if not stage2_report or "[Ошибка" in stage2_report:
-             # Если второй этап не удался, отправим информативное сообщение об этом
-             return f"Технический анализ не удался. \n\nДетали: {stage2_report}"
+        # --- УЛУЧШЕНИЕ: Более информативный ответ при ошибке ---
+        if not analysis_parts.get("stage2"):
+            error_msg = "Технический анализ не удался. Не удалось извлечь данные для 2-го этапа из ответа ИИ."
+            logger.error(error_msg)
+            # Возвращаем первую часть отчета для отладки
+            stage1_preview = (analysis_parts.get("stage1") or "")
+            return f"{error_msg}\n\n<b>Детали (ответ 1-го этапа):</b>\n<pre>{stage1_preview}</pre>"
 
-        return stage2_report
+        # Возвращаем только вторую, техническую часть для отправки в Telegram
+        return analysis_parts.get("stage2")
 
     except Exception as e:
-        error_msg = f"--- Произошла критическая ошибка в 'run_full_analysis': {e} ---"
-        logger.error(error_msg, exc_info=True)
-        return error_msg
-
+        logger.critical(f"--- Произошла критическая ошибка в 'run_full_analysis': {e} ---", exc_info=True)
+        return f"--- Произошла критическая ошибка в 'run_full_analysis': {e} ---"
 
 # Этот блок теперь не нужен для основного запуска, но может быть полезен для тестов
 if __name__ == '__main__':

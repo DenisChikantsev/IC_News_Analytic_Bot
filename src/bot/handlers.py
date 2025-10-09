@@ -1,4 +1,5 @@
 import telebot
+from telebot.apihelper import ApiTelegramException
 from src.config import BOT_TOKEN, CHAT_ID, TOPIC_CONFIGS
 from src.engine.analyzer import run_full_analysis
 import logging
@@ -11,6 +12,46 @@ MODERATED_TOPIC_IDS = [
 ]
 
 bot = telebot.TeleBot(BOT_TOKEN)
+
+
+def _send_report(report: str, chat_id: str, topic_id: str):
+    """
+    Отправляет отчет в указанный чат и топик, разбивая на части,
+    если он слишком длинный. Пытается использовать MarkdownV2,
+    при ошибке откатывается к простому тексту.
+    """
+    try:
+        # Убедимся, что ID в числовом формате
+        cid = int(chat_id)
+        tid = int(topic_id)
+
+        for part in telebot.util.smart_split(report, 4096):
+            try:
+                # Сначала пытаемся отправить с форматированием MarkdownV2
+                bot.send_message(
+                    chat_id=cid,
+                    text=part,
+                    message_thread_id=tid,
+                    parse_mode="HTML"
+                )
+            except ApiTelegramException as e:
+                if "can't parse entities" in e.description:
+                    # Если ошибка связана с парсингом Markdown, отправляем как обычный текст
+                    logger.warning(f"Ошибка парсинга Markdown, отправляю как обычный текст. Ошибка: {e.description}")
+                    bot.send_message(
+                        chat_id=cid,
+                        text=part,
+                        message_thread_id=tid
+                        # parse_mode не указан
+                    )
+                else:
+                    # Если ошибка другая, пробрасываем ее дальше
+                    raise
+        logger.info(f"Отчет успешно отправлен в чат {cid}, топик {tid}")
+    except Exception as e:
+        logger.error(f"Не удалось отправить отчет в чат {chat_id}, топик {topic_id}: {e}", exc_info=True)
+        # Можно добавить уведомление об ошибке отправки, если это необходимо
+        # bot.send_message(chat_id, "Не удалось отправить отчет.")
 
 
 @bot.message_handler(commands=['start'])
@@ -65,34 +106,12 @@ def analysis_handler(message):
 
     try:
         report = run_full_analysis(analysis_config)
-
         bot.reply_to(message, f"✅ Анализ '{analysis_type}' завершен, отправляю отчет в целевой топик.")
-        for part in telebot.util.smart_split(report, 4096):
-            # --- ИЗМЕНЕНИЕ НАЧАЛО ---
-            try:
-                # Пытаемся отправить с Markdown
-                bot.send_message(
-                    chat_id=int(CHAT_ID),
-                    text=part,
-                    message_thread_id=int(topic_id),
-                    parse_mode="MarkdownV2"
-                )
-            except telebot.apihelper.ApiTelegramException as e:
-                if "can't parse entities" in e.description:
-                    # Если не получилось, отправляем как обычный текст
-                    logger.warning(f"Ошибка парсинга Markdown, отправляю как обычный текст. Ошибка: {e.description}")
-                    bot.send_message(
-                        chat_id=int(CHAT_ID),
-                        text=part,
-                        message_thread_id=int(topic_id)
-                        # parse_mode не указан
-                    )
-                else:
-                    # Если ошибка другая, пробрасываем ее дальше
-                    raise
-            # --- ИЗМЕНЕНИЕ КОНЕЦ ---
 
-        logger.info(f"Отчет '{analysis_type}' успешно отправлен в чат {CHAT_ID}, топик {topic_id}")
+        # --- ИЗМЕНЕНИЕ ---
+        # Используем новую функцию для отправки отчета
+        _send_report(report, CHAT_ID, topic_id)
+        # --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
     except Exception as e:
         logger.error(f"Ошибка при выполнении ручного анализа '{analysis_type}': {e}", exc_info=True)

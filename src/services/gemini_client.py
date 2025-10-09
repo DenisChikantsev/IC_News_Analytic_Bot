@@ -2,7 +2,9 @@ import re
 import logging
 import google.genai as genai
 from google.genai.types import Tool, GoogleSearch, GenerateContentConfig
-from src.config import GEMINI_API_KEY, USA_STOCKS_PROMPT
+from google.genai.errors import ServerError
+from src.config import GEMINI_API_KEY
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 logger = logging.getLogger(__name__)
 
@@ -16,20 +18,30 @@ class GeminiClient:
     def __init__(self):
         if not GEMINI_API_KEY:
             raise ValueError("Ключ GEMINI_API_KEY не найден в переменных окружения.")
-
         self.client = genai.Client(api_key=GEMINI_API_KEY)
-        self.model_name = 'gemini-2.5-flash'
-
+        self.model_name = 'gemini-2.0-flash'
         search_tool = Tool(google_search=GoogleSearch())
-
         self.generation_config = GenerateContentConfig(
             tools=[search_tool],
             temperature=0.7
         )
-        # ----------------------------------------------------
         logger.info(
             f"Клиент Gemini инициализирован с моделью '{self.model_name}' и доступом в интернет."
         )
+
+    @retry(
+        # Ждем с экспоненциальной задержкой: 1с, 2с, 4с, 8с...
+        wait=wait_exponential(multiplier=1, min=1, max=60),
+        # Останавливаемся после 5 попыток
+        stop=stop_after_attempt(5),
+        # Повторяем только при серверных ошибках (503, 500) или таймаутах
+        retry=retry_if_exception_type((ServerError)),
+        # Логируем каждую попытку
+        before_sleep=lambda retry_state: logger.warning(
+            f"Получена ошибка от Gemini, повторная попытка #{retry_state.attempt_number} "
+            f"через {int(retry_state.next_action.sleep)} секунд..."
+        )
+    )
 
     def _execute_analysis(self, prompt: str) -> str:
         """Приватный метод для выполнения запроса к Gemini."""
@@ -42,59 +54,46 @@ class GeminiClient:
             )
 
             logger.info("Ответ от Gemini получен.")
-            return response.text
+            return response.text or ""
         except Exception as e:
             error_message = f"[Ошибка при обращении к Gemini API: {e}]"
             logger.error(error_message, exc_info=True)
             return error_message
 
-    def _parse_stage1_tickers(self, analysis_text: str) -> list[str]:
-        """
-        Извлекает тикеры из блока 'ЗАПРОС НА ВТОРОЙ ЭТАП'.
-        Поддерживает нумерованные списки, списки с маркерами (* или -) и списки в скобках.
-        """
-        section_match = re.search(r"ЗАПРОС НА ВТОРОЙ ЭТАП:.*", analysis_text, re.IGNORECASE | re.DOTALL)
-        if not section_match:
-            logger.warning("Не удалось найти секцию 'ЗАПРОС НА ВТОРОЙ ЭТАП'.")
+    def _parse_stage1_tickers(self, analysis_text: str, parsing_keys: dict) -> list[str]:
+        # Используем ключ из конфига, с запасным вариантом по умолчанию
+        tickers_key = parsing_keys.get("tickers_section", "ЗАПРОС НА ВТОРОЙ ЭТАП")
+
+        match = re.search(rf"{tickers_key}:.*", analysis_text, re.IGNORECASE | re.DOTALL)
+        if not match:
+            logger.warning(f"Не удалось найти секцию '{tickers_key}'.")
             return []
 
-        section_text = section_match.group(0)
+        section_text = match.group(0)
+        # Этот Regex найдет и тикеры (BTC), и валютные пары (EUR/USD)
+        tickers = re.findall(r'\b[A-Z]{2,6}(?:/[A-Z]{2,3})?\b', section_text)
 
-        tickers = re.findall(r"[\*\-]\s*\*?([A-Z]{1,5})\*?", section_text)
-        if tickers:
-            tickers = [t.strip() for t in tickers]
-            logger.info(f"Найдены тикеры для 2-го этапа (формат списка с маркерами): {tickers}")
-            return tickers
+        if not tickers:
+            logger.warning(f"В секции '{tickers_key}' не найдено тикеров.")
+            return []
 
-        # Затем ищем нумерованные списки
-        tickers = re.findall(r"\d+\.\s*\*?([A-Z]{1,5})\*?", section_text)
-        if tickers:
-            tickers = [t.strip() for t in tickers]
-            logger.info(f"Найдены тикеры для 2-го этапа (формат нумерованного списка): {tickers}")
-            return tickers
+        logger.info(f"Найдены тикеры для 2-го этапа: {tickers}")
+        return tickers
 
-        # Резервный вариант: ищем формат в скобках
-        match = re.search(r"\((.*?)\)", section_text, re.IGNORECASE | re.DOTALL)
-        if match:
-            tickers_str = match.group(1)
-            potential_tickers = [t.strip() for t in tickers_str.split(',')]
-            tickers = [t for t in potential_tickers if re.fullmatch(r'[A-Z]{1,5}', t)]
-            if tickers:
-                logger.info(f"Найдены тикеры для 2-го этапа (формат в скобках): {tickers}")
-                return tickers
+    def _parse_stage1_analysis_block(self, analysis_text: str, parsing_keys: dict) -> str | None:
+        # Используем ключи из конфига
+        analysis_key = parsing_keys.get("analysis_section", "АНАЛИЗ И ТЕЗИСЫ")
+        tickers_key = parsing_keys.get("tickers_section", "ЗАПРОС НА ВТОРОЙ ЭТАП")
 
-        logger.warning(
-            "Не удалось найти тикеры для второго этапа анализа. Формат ответа модели не соответствует ожидаемому.")
-        return []
-
-    def _parse_stage1_analysis_block(self, analysis_text: str) -> str | None:
-        """Извлекает весь блок 'АНАЛИЗ И ТЕЗИСЫ' для передачи в следующий этап."""
-        match = re.search(r"АНАЛИЗ И ТЕЗИСЫ:\s*(.*)", analysis_text, re.DOTALL | re.IGNORECASE)
-        if not match:
-            logger.warning("Не удалось найти блок 'Анализ и Тезисы'.")
+        try:
+            # Разделяем по ключу начала анализа
+            after_header = re.split(rf"{analysis_key}:", analysis_text, maxsplit=1, flags=re.IGNORECASE)[1]
+            # Разделяем по ключу конца анализа (началу следующей секции)
+            analysis_block = re.split(rf"{tickers_key}:", after_header, maxsplit=1, flags=re.IGNORECASE)[0]
+            return analysis_block.strip()
+        except IndexError:
+            logger.warning(f"Не удалось найти или корректно распарсить блок '{analysis_key}'.")
             return None
-        analysis_block = match.group(1).split('ЗАПРОС НА ВТОРОЙ ЭТАП:')[0].strip()
-        return analysis_block
 
     def _construct_stage2_prompt(self, tickers: list[str], analysis_block: str) -> str:
         """Создает промпт для второго, технического, этапа анализа."""
@@ -115,26 +114,23 @@ class GeminiClient:
                             *   Индекс относительной силы (RSI, 14 дней)
                         2.  **Сформулируй финальную рекомендацию:** Основываясь на этих технических данных, подтверди, отмени или скорректируй исходную торговую идею. Дай конкретную **Целевую Цену (Target Price)** или **Уровень Стоп-Лосса (Stop-Loss)**.
 
-                        **ФОРМАТ ВЫХОДА (строго соблюдай структуру):**
+                        <b>ФОРМАТ ВЫХОДА (строго соблюдай структуру HTML для Telegram):</b>
 
-                        **ТЕХНИЧЕСКИЙ АНАЛИЗ И РЕКОМЕНДАЦИИ:**
+                        <b>ТЕХНИЧЕСКИЙ АНАЛИЗ И РЕКОМЕНДАЦИИ:</b>
 
-                        **Тикер: [Тикер 1]**
-                        *   **Технические данные:** Цена: [значение], MA50: [значение], MA200: [значение], RSI: [значение]
-                        *   **Рекомендация:** [Твоя краткая рекомендация и уровни]
-                        *   **Срок реализации:** [Краткосрочный/Среднесрочный/Долгосрочный]
+                        <b>Тикер: [Тикер 1]</b>
+                        • <i>Технические данные:</i> Цена: [значение], MA50: [значение], MA200: [значение], RSI: [значение]
+                        • <i>Рекомендация:</i> [Твоя краткая рекомендация и уровни]
+                        • <i>Срок реализации:</i> [Краткосрочный/Среднесрочный/Долгосрочный]
 
-                        **Тикер: [Тикер 2]**
+                        <b>Тикер: [Тикер 2]</b>
                         ... и так далее.
                         """
         prompt_parts.append(task_prompt)
         return "\n".join(prompt_parts)
 
-    def run_two_stage_analysis(self, digest: str, prompt_template: str) -> dict[str, str]:
-        """
-        Выполняет полный двухэтапный анализ и возвращает результат в виде словаря.
-        Возвращает: {"stage1": "текст первого этапа", "stage2": "текст второго этапа"}
-        """
+
+    def run_two_stage_analysis(self, digest: str, prompt_template: str, parsing_keys: dict) -> dict[str, str]:
         logger.info("--- Запуск 1-го этапа анализа (фундаментальный) ---")
         stage1_prompt = prompt_template.replace("[Вставь полный дайджест новостей]", digest)
         analysis_part_1 = self._execute_analysis(stage1_prompt)
@@ -142,17 +138,16 @@ class GeminiClient:
         if "[Ошибка" in analysis_part_1:
             return {"stage1": analysis_part_1, "stage2": ""}
 
-        tickers = self._parse_stage1_tickers(analysis_part_1)
-        analysis_block = self._parse_stage1_analysis_block(analysis_part_1)
+        # Передаем ключи в парсеры
+        tickers = self._parse_stage1_tickers(analysis_part_1, parsing_keys)
+        analysis_block = self._parse_stage1_analysis_block(analysis_part_1, parsing_keys)
 
         if not tickers or not analysis_block:
             logger.warning("Не удалось извлечь данные для 2-го этапа. Возвращаю только 1-й этап.")
-            # ИЗМЕНЕНИЕ: Возвращаем словарь, но вторая часть пустая.
             return {"stage1": analysis_part_1, "stage2": ""}
 
         logger.info("--- Запуск 2-го этапа анализа (технический) ---")
         stage2_prompt = self._construct_stage2_prompt(tickers, analysis_block)
         analysis_part_2 = self._execute_analysis(stage2_prompt)
 
-        # ИЗМЕНЕНИЕ: Возвращаем словарь с двумя частями.
         return {"stage1": analysis_part_1, "stage2": analysis_part_2}
