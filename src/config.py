@@ -111,16 +111,16 @@ TOPIC_CONFIGS = {
                         'ECONOMY','FINANCE','ENERGY']
     },
     # Пример, как можно будет добавить другие анализы:
-    # "CRYPTO": {
-    #     "id": os.getenv("CRYPTO_ID"),
-    #     "prompt": CRYPTO_PROMPT,
-    #     "news_source": "google",
-    #     "news_topics": ['CRYPTOCURRENCIES', 'BITCOIN', 'ETHEREUM']
-    # },
-    # "CURRENCY": {
-    #     "id": os.getenv("CURRENCY_ID"),
-    #     "prompt": CURRENCY_PROMPT,
-    #     "news_source": "google",
-    #     "news_topics": ['FOREX', 'CURRENCY']
-    # }
+    "CRYPTO": {
+        "id": os.getenv("CRYPTO_ID"),
+        "prompt": CRYPTO_PROMPT,
+        "news_source": "google",
+        "news_topics": ['CRYPTOCURRENCIES', 'BITCOIN', 'ETHEREUM']
+    },
+    "CURRENCY": {
+        "id": os.getenv("CURRENCY_ID"),
+        "prompt": CURRENCY_PROMPT,
+        "news_source": "google",
+        "news_topics": ['FOREX', 'CURRENCY']
+    }
 }

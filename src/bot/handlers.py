@@ -75,7 +75,7 @@ def analysis_handler(message):
                     chat_id=int(CHAT_ID),
                     text=part,
                     message_thread_id=int(topic_id),
-                    parse_mode="Markdown"
+                    parse_mode="MarkdownV2"
                 )
             except telebot.apihelper.ApiTelegramException as e:
                 if "can't parse entities" in e.description:
