@@ -59,4 +59,5 @@ def start_scheduler():
 
 
     logger.info("Планировщик настроен. Запуск анализа USA_STOCKS каждый день в 9:00 МСК.")
+    logger.info("Планировщик настроен. Запуск анализа CRYPTO каждый день в 9:10 МСК.")
     scheduler.start()

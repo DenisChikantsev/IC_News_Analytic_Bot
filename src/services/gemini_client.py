@@ -19,7 +19,7 @@ class GeminiClient:
         if not GEMINI_API_KEY:
             raise ValueError("Ключ GEMINI_API_KEY не найден в переменных окружения.")
         self.client = genai.Client(api_key=GEMINI_API_KEY)
-        self.model_name = 'gemini-2.0-flash'
+        self.model_name = 'gemini-2.5-flash'
         search_tool = Tool(google_search=GoogleSearch())
         self.generation_config = GenerateContentConfig(
             tools=[search_tool],
