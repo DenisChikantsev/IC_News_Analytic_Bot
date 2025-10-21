@@ -21,25 +21,6 @@ def _prepare_digest_for_ai(articles: list) -> str:
     return "".join(digest_parts)
 
 
-def _format_theses_block_as_html(raw_text: str) -> str:
-    """Преобразует сырой текст блока тезисов в красивый HTML для Telegram."""
-    if not raw_text:
-        return ""
-
-    # 1. Заменяем маркеры нарративов на жирные заголовки
-    # Пример: "*   **Нарратив 1:...** ->" превратится в "<b>Нарратив 1:...</b>"
-    formatted_text = re.sub(r'\*\s*\*\*(.*?)\*\*\s*->', r'<b>\1</b>', raw_text)
-
-    # 2. Оборачиваем тикеры и направление в тег <code> для выделения
-    # Пример: "BTC: SHORT" превратится в "<code>BTC: SHORT</code>"
-    formatted_text = re.sub(r'([A-Z]{2,6}:\s*(?:LONG|SHORT|BUY|SELL))', r'<code>\1</code>', formatted_text)
-
-    # 3. Убираем лишние символы и пробелы для чистоты
-    formatted_text = formatted_text.replace('*', '').strip()
-
-    return formatted_text
-
-
 def _extract_analysis_block(full_text: str, parsing_keys: dict) -> str | None:
     """Извлекает и ФОРМАТИРУЕТ блок с тезисами, используя ключи из конфига."""
     analysis_key = parsing_keys.get("analysis_section", "АНАЛИЗ И ТЕЗИСЫ")
@@ -65,17 +46,20 @@ def run_full_analysis(analysis_config: dict) -> list[str]:
     """
     Выполняет полный цикл анализа и возвращает список сообщений для отправки в Telegram.
     """
-    # ... (весь остальной код функции run_full_analysis остается без изменений)
     messages_to_send = []
     try:
         news_topics = analysis_config.get("news_topics", [])
         prompt_template = analysis_config.get("prompt")
         parsing_keys = analysis_config.get("parsing_keys", {})
+        analysis_type = analysis_config.get("type_name", "Unknown") # Добавим для логов
+
         if not prompt_template:
             raise ValueError("Шаблон промпта не найден в конфигурации.")
+
         logger.info(f"Сбор новостей по темам: {news_topics}")
         news = gather_strategic_news(topics=news_topics)
         digest = _prepare_digest_for_ai(news)
+
         client = GeminiClient()
         analysis_parts = client.run_two_stage_analysis(
             digest=digest,
@@ -83,46 +67,50 @@ def run_full_analysis(analysis_config: dict) -> list[str]:
             parsing_keys=parsing_keys
         )
 
-        # Сохранение полного отчета в файл (логика без изменений)
-        full_report_text = analysis_parts.get("stage1", "")
-        if analysis_parts.get("stage2"):
-            full_report_text += "\n\n" + analysis_parts.get("stage2")
+        # --- НОВАЯ, УПРОЩЕННАЯ ЛОГИКА ФОРМИРОВАНИЯ СООБЩЕНИЙ ---
+        stage1_text = analysis_parts.get("stage1")
+        stage2_text = analysis_parts.get("stage2")
+
+        # 1. Добавляем результат первого этапа (уже в HTML)
+        if stage1_text and "[Ошибка" not in stage1_text:
+            # Убираем строку с запросом на второй этап из финального сообщения
+            stage1_clean = stage1_text.split(parsing_keys.get("tickers_section", "ЗАПРОС НА ВТОРОЙ ЭТАП"))[0].strip()
+            messages_to_send.append(stage1_clean)
+        elif stage1_text: # Если была ошибка
+             messages_to_send.append(f"<b>Ошибка на 1-м этапе анализа ({analysis_type}):</b>\n<pre>{stage1_text}</pre>")
+
+
+        # 2. Добавляем технический анализ или сообщение об ошибке
+        if not stage2_text or "[Ошибка" in stage2_text:
+            error_msg = f"<b>Технический анализ ({analysis_type}) не удался или произошла ошибка.</b>"
+            logger.error(error_msg)
+            details = stage2_text or "Нет дополнительных деталей."
+            # Не добавляем сообщение об ошибке, если первый этап тоже провалился
+            if stage1_text and "[Ошибка" not in stage1_text:
+                 messages_to_send.append(f"{error_msg}\n\n<b>Детали:</b>\n<pre>{details}</pre>")
+        else:
+            messages_to_send.append(stage2_text)
+
+        # Сохранение полного отчета в файл для отладки
+        full_report_text = f"--- STAGE 1 ---\n{stage1_text}\n\n--- STAGE 2 ---\n{stage2_text}"
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_file = OUTPUT_DIR / f"gemini_analysis_{timestamp}.txt"
+        output_file = OUTPUT_DIR / f"gemini_analysis_{analysis_type}_{timestamp}.txt"
         with open(output_file, "w", encoding="utf-8") as f:
             f.write(full_report_text)
         logger.info(f"--- Полный анализ сохранен в файл '{output_file}' ---")
 
-        # --- ЛОГИКА ФОРМИРОВАНИЯ СПИСКА СООБЩЕНИЙ ---
-        stage1_text = analysis_parts.get("stage1")
-        stage2_text = analysis_parts.get("stage2")
-
-        # 1. Добавляем блок с тезисами, если он найден
-        if stage1_text:
-            theses_block = _extract_analysis_block(stage1_text, parsing_keys)
-            if theses_block:
-                messages_to_send.append(theses_block)
-
-        # 2. Добавляем технический анализ или сообщение об ошибке
-        if not stage2_text or "[Ошибка" in stage2_text:
-            error_msg = "Технический анализ не удался или произошла ошибка."
-            logger.error(error_msg)
-            details = stage2_text or stage1_text
-            messages_to_send.append(f"{error_msg}\n\n<b>Детали:</b>\n<pre>{details}</pre>")
-        else:
-            messages_to_send.append(stage2_text)
-
     except Exception as e:
-        logger.critical(f"--- Произошла критическая ошибка в 'run_full_analysis': {e} ---", exc_info=True)
-        messages_to_send.append(f"--- Произошла критическая ошибка в 'run_full_analysis': {e} ---")
+        logger.critical(f"--- Критическая ошибка в 'run_full_analysis': {e} ---", exc_info=True)
+        messages_to_send.append(f"<b>Критическая ошибка в 'run_full_analysis':</b>\n<pre>{e}</pre>")
 
     if not messages_to_send:
         messages_to_send.append("Анализ завершился без результата.")
 
-    # Добавляем временную метку в конец ПОСЛЕДНЕГО сообщения
-    timestamp_str = datetime.now().strftime("%d.%m.%Y %H:%M")
-    footer = f"\n\n<i>Отчет сформирован: {timestamp_str}</i>"
-    messages_to_send[-1] += footer
+        # Добавляем временную метку в конец ПОСЛЕДНЕГО сообщения
+    if messages_to_send:
+        timestamp_str = datetime.now().strftime("%d.%m.%Y %H:%M")
+        footer = f"\n\n<i>Отчет сформирован: {timestamp_str}</i>"
+        messages_to_send[-1] += footer
 
     return messages_to_send
 

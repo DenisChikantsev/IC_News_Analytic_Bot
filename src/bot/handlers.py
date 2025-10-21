@@ -106,10 +106,10 @@ def analysis_handler(message):
     logger.info(f"Ручной запуск анализа '{analysis_type}' по команде /run_analysis")
 
     try:
-        report = run_full_analysis(analysis_config)
+        reports = run_full_analysis(analysis_config)
         bot.reply_to(message, f"✅ Анализ '{analysis_type}' завершен, отправляю отчет в целевой топик.")
 
-        _send_report(report, CHAT_ID, topic_id)
+        _send_report(reports, CHAT_ID, topic_id)
 
     except Exception as e:
         logger.error(f"Ошибка при выполнении ручного анализа '{analysis_type}': {e}", exc_info=True)
