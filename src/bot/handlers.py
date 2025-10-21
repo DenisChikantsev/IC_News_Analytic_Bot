@@ -14,40 +14,44 @@ MODERATED_TOPIC_IDS = [
 bot = telebot.TeleBot(BOT_TOKEN)
 
 
-def _send_report(report: str, chat_id: str, topic_id: str):
+def _send_report(reports: list[str], chat_id: str, topic_id: str):
     """
-    Отправляет отчет в указанный чат и топик, разбивая на части,
-    если он слишком длинный. Пытается использовать HTML
-    при ошибке откатывается к простому тексту.
+    Отправляет серию отчетов в указанный чат и топик.
+    Каждый элемент списка reports отправляется как отдельное сообщение.
     """
     try:
-        # Убедимся, что ID в числовом формате
         cid = int(chat_id)
         tid = int(topic_id)
-        for part in telebot.util.smart_split(report, 4096):
-            try:
-                # Сначала пытаемся отправить с форматированием HTML
-                bot.send_message(
-                    chat_id=cid,
-                    text=part,
-                    message_thread_id=tid,
-                    parse_mode="HTML"
-                )
-            except ApiTelegramException as e:
-                if "can't parse entities" in e.description:
-                    # Если ошибка связана с парсингом Markdown, отправляем как обычный текст
-                    logger.warning(f"Ошибка парсинга, отправляю как обычный текст. Ошибка: {e.description}")
+
+        if not reports:
+            logger.warning(f"Попытка отправить пустой список отчетов в чат {cid}, топик {tid}.")
+            return
+        for report_text in reports:
+            # Разбиваем каждое сообщение на части, если оно слишком длинное
+            for part in telebot.util.smart_split(report_text, 4096):
+                try:
+                    # Сначала пытаемся отправить с форматированием HTML
                     bot.send_message(
                         chat_id=cid,
                         text=part,
-                        message_thread_id=tid
+                        message_thread_id=tid,
+                        parse_mode="HTML"
                     )
-                else:
-                    raise
-        logger.info(f"Отчет успешно отправлен в чат {cid}, топик {tid}")
+                except ApiTelegramException as e:
+                    if "can't parse entities" in e.description:
+                        logger.warning(f"Ошибка парсинга HTML, отправляю как обычный текст. Ошибка: {e.description}")
+                        bot.send_message(
+                            chat_id=cid,
+                            text=part,
+                            message_thread_id=tid
+                        )
+                    else:
+                        # Перебрасываем другие исключения API
+                        raise
+        logger.info(f"Серия отчетов ({len(reports)} шт.) успешно отправлена в чат {cid}, топик {tid}")
+
     except Exception as e:
         logger.error(f"Не удалось отправить отчет в чат {chat_id}, топик {topic_id}: {e}", exc_info=True)
-        # Можно добавить уведомление об ошибке отправки, если это необходимо
         # bot.send_message(chat_id, "Не удалось отправить отчет.")
 
 

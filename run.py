@@ -31,10 +31,10 @@ def run_bot_polling():
         try:
             # non_stop=False, так как мы сами управляем перезапуском
             # timeout=90 - это таймаут для получения обновлений, а не для всего соединения
-            bot.polling(none_stop=True, interval=0, timeout=30,
+            bot.polling(non_stop=False, interval=5, timeout=30,
                         allowed_updates=['message', 'callback_query'], skip_pending=True)
         except Exception as e:
-            logger.error(f"Ошибка в работе бота: {e}")
+            logger.error(f"Ошибка в работе бота: {e}", exc_info=True)
             logger.info("Перезапуск через 15 секунд...")
             time.sleep(15)
 

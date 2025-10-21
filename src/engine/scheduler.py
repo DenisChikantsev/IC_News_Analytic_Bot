@@ -23,15 +23,12 @@ def send_analysis_report_job(analysis_type: str):
         return
 
     try:
-        report = run_full_analysis(analysis_config)
-        if not report or "[Ошибка" in report:
-            logger.error(f"Анализ '{analysis_type}' завершился с ошибкой или пустым результатом. Отчет не отправлен. Результат: {report}")
+        report_parts = run_full_analysis(analysis_config)
+        if not report_parts or any("[Ошибка" in part for part in report_parts):
+            logger.error(f"Анализ '{analysis_type}' завершился с ошибкой или пустым результатом. Отчет не отправлен. "
+                         f"Результат: {report_parts}")
             return
-
-        # --- ИЗМЕНЕНИЕ ---
-        # Используем новую функцию для отправки отчета
         _send_report(report, CHAT_ID, topic_id)
-        # --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
         logger.info(f"✅ Отчет '{analysis_type}' по расписанию успешно отправлен.")
 
@@ -51,13 +48,18 @@ def start_scheduler():
 
     scheduler.add_job(send_analysis_report_job, 'cron', hour=9, minute=0, args=["USA_STOCKS"])
     scheduler.add_job(send_analysis_report_job, 'cron', hour=18, minute=0, args=["USA_STOCKS"])
+
     scheduler.add_job(send_analysis_report_job, 'cron', hour=9, minute=10, args=["CRYPTO"])
     scheduler.add_job(send_analysis_report_job, 'cron', hour=18, minute=10, args=["CRYPTO"])
+
+    scheduler.add_job(send_analysis_report_job, 'cron', hour=9, minute=20, args=["CURRENCY"])
+    scheduler.add_job(send_analysis_report_job, 'cron', hour=18, minute=20, args=["CURRENCY"])
 
     # scheduler.add_job(send_analysis_report_job, 'cron', hour=9, minute=0, args=["USA_STOCKS"])
     # scheduler.add_job(send_analysis_report_job, 'cron', hour=18, minute=0, args=["USA_STOCKS"])
 
 
-    logger.info("Планировщик настроен. Запуск анализа USA_STOCKS каждый день в 9:00 МСК.")
-    logger.info("Планировщик настроен. Запуск анализа CRYPTO каждый день в 9:10 МСК.")
+    logger.info("Планировщик настроен. Запуск анализа USA_STOCKS каждый день в 9:00 и 18.00 МСК.")
+    logger.info("Планировщик настроен. Запуск анализа CRYPTO каждый день в 9:10 и 18.10 МСК.")
+    logger.info("Планировщик настроен. Запуск анализа CURRENCY каждый день в 9:20 и 18.20 МСК.")
     scheduler.start()
