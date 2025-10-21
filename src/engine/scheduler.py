@@ -28,7 +28,7 @@ def send_analysis_report_job(analysis_type: str):
             logger.error(f"Анализ '{analysis_type}' завершился с ошибкой или пустым результатом. Отчет не отправлен. "
                          f"Результат: {report_parts}")
             return
-        _send_report(report, CHAT_ID, topic_id)
+        _send_report(report_parts, CHAT_ID, topic_id)
 
         logger.info(f"✅ Отчет '{analysis_type}' по расписанию успешно отправлен.")
 
