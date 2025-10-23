@@ -1,6 +1,6 @@
 import telebot
 from telebot.apihelper import ApiTelegramException
-from src.config import BOT_TOKEN, CHAT_ID, TOPIC_CONFIGS
+from src.config import BOT_TOKEN, CHAT_ID, TOPIC_CONFIGS, ADMIN_ID
 from src.engine.analyzer import run_full_analysis
 import logging
 
@@ -14,7 +14,7 @@ MODERATED_TOPIC_IDS = [
 bot = telebot.TeleBot(BOT_TOKEN)
 
 
-def _send_report(reports: list[str], chat_id: str, topic_id: str):
+def send_report(reports: list[str], chat_id: str, topic_id: str):
     """
     Отправляет серию отчетов в указанный чат и топик.
     Каждый элемент списка reports отправляется как отдельное сообщение.
@@ -35,7 +35,8 @@ def _send_report(reports: list[str], chat_id: str, topic_id: str):
                         chat_id=cid,
                         text=part,
                         message_thread_id=tid,
-                        parse_mode="HTML"
+                        parse_mode="HTML",
+                        disable_web_page_preview=False
                     )
                 except ApiTelegramException as e:
                     if "can't parse entities" in e.description:
@@ -43,7 +44,8 @@ def _send_report(reports: list[str], chat_id: str, topic_id: str):
                         bot.send_message(
                             chat_id=cid,
                             text=part,
-                            message_thread_id=tid
+                            message_thread_id=tid,
+                            disable_web_page_preview=False
                         )
                     else:
                         # Перебрасываем другие исключения API
@@ -81,6 +83,8 @@ def send_welcome(message):
 
 @bot.message_handler(commands=['run_analysis'])
 def analysis_handler(message):
+    if message.from_user.id != ADMIN_ID:
+        return
     """Запускает полный цикл анализа вручную для указанного типа."""
     args = message.text.split()
     if len(args) < 2:
@@ -106,10 +110,10 @@ def analysis_handler(message):
     logger.info(f"Ручной запуск анализа '{analysis_type}' по команде /run_analysis")
 
     try:
-        reports = run_full_analysis(analysis_config)
+        report = run_full_analysis(analysis_config)
         bot.reply_to(message, f"✅ Анализ '{analysis_type}' завершен, отправляю отчет в целевой топик.")
 
-        _send_report(reports, CHAT_ID, topic_id)
+        send_report([report], CHAT_ID, topic_id)
 
     except Exception as e:
         logger.error(f"Ошибка при выполнении ручного анализа '{analysis_type}': {e}", exc_info=True)

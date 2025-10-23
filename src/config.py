@@ -18,12 +18,14 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-
+TELEGRAPH_ACCESS_TOKEN = os.getenv("TELEGRAPH_ACCESS_TOKEN")
 # Проверяем наличие токена
 if not BOT_TOKEN:
     raise ValueError("Токен телеграм-бота (BOT_TOKEN) не найден в .env файле.")
 
 # --- Настройки Telegram ---
+ADMIN_ID = os.getenv("ADMIN_ID")
+SUPERGROUP_LINK = os.getenv("SUPERGROUP_LINK")
 CHAT_ID = os.getenv("SUPERGROUP_ID")
 CURRENCY_ID = os.getenv("CURRENCY_ID")
 CRYPTO_ID = os.getenv("CRYPTO_ID")

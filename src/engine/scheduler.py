@@ -1,5 +1,5 @@
 from apscheduler.schedulers.blocking import BlockingScheduler
-from src.bot.handlers import _send_report  # <<< ИЗМЕНЕНИЕ: Импортируем новую функцию
+from src.bot.handlers import send_report
 from src.engine.analyzer import run_full_analysis
 from src.config import CHAT_ID, TOPIC_CONFIGS
 import logging
@@ -25,12 +25,12 @@ def send_analysis_report_job(analysis_type: str):
         return
 
     try:
-        report_parts = run_full_analysis(analysis_config)
-        if not report_parts or any("[Ошибка" in part for part in report_parts):
+        report = run_full_analysis(analysis_config)
+        if not report or "[Ошибка":
             logger.error(f"Анализ '{analysis_type}' завершился с ошибкой или пустым результатом. Отчет не отправлен. "
                          f"Результат: {report_parts}")
             return
-        _send_report(report_parts, CHAT_ID, topic_id)
+        send_report([report], CHAT_ID, topic_id)
 
         logger.info(f"✅ Отчет '{analysis_type}' по расписанию успешно отправлен.")
 
