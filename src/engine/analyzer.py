@@ -95,15 +95,36 @@ def _sanitize_html_for_telegraph(html_content: str) -> str:
     return str(soup)
 
 
-def run_full_analysis(analysis_config: dict) -> str:
+def _clean_ai_meta_response(text: str) -> str:
+    """
+    Удаляет из текста шаблонные "мета-ответы" от AI, где он описывает свою роль.
+    Например: "Я, как опытный аналитик, проанализировал данные..."
+    """
+    if not text:
+        return ""
+
+    # Список регулярных выражений для поиска и удаления шаблонных фраз в начале текста.
+    # re.IGNORECASE делает поиск нечувствительным к регистру.
+    patterns = [
+        re.compile(r"^\s*Я,\s*как\s+опытный.*?проанализировал.*?данные[:.]?\s*", re.IGNORECASE),
+        re.compile(r"^\s*Проанализировав\s+представленные\s+данные.*?:?\s*", re.IGNORECASE),
+        re.compile(r"^\s*Конечно[,!.]?\s*Вот\s+анализ.*?:?\s*", re.IGNORECASE),
+        re.compile(r"^\s*Вот\s+структурированный\s+анализ.*?:?\s*", re.IGNORECASE),
+    ]
+
+    cleaned_text = text
+    for pattern in patterns:
+        cleaned_text = pattern.sub("", cleaned_text, count=1) # count=1 заменяет только первое вхождение
+
+    return cleaned_text.strip()
+
+
+def run_full_analysis(analysis_config: dict, analysis_type: str) -> str:
     """
     Выполняет полный цикл анализа, создает страницу в Telegraph и возвращает
     сообщение со ссылкой для отправки в Telegram.
     """
     try:
-        analysis_type = analysis_config.get("type_name", "Unknown")
-        analysis_config['type_name'] = analysis_type
-
         prompt_template = analysis_config.get("prompt")
         parsing_keys = analysis_config.get("parsing_keys", {})
 
@@ -121,6 +142,10 @@ def run_full_analysis(analysis_config: dict) -> str:
 
         stage1_text = analysis_parts.get("stage1")
         stage2_text = analysis_parts.get("stage2")
+
+        # Очищаем мета-ответы AI
+        stage1_text = _clean_ai_meta_response(stage1_text)
+        stage2_text = _clean_ai_meta_response(stage2_text)
 
         # 2. Проверка результатов
         if not stage1_text or "[Ошибка" in stage1_text:
@@ -141,7 +166,7 @@ def run_full_analysis(analysis_config: dict) -> str:
         # Добавляем очищенный HTML первого этапа
         full_html_content += _sanitize_html_for_telegraph(stage1_clean)
 
-        # Добавляем очищенный HTML второго этаpa
+        # Добавляем очищенный HTML второго этапa
         if stage2_text and "[Ошибка" not in stage2_text:
             # Теперь просто добавляем текст, так как он уже содержит заголовок <h4>
             full_html_content += _sanitize_html_for_telegraph(stage2_text)
@@ -157,25 +182,9 @@ def run_full_analysis(analysis_config: dict) -> str:
         if not page_url:
             return f"<b>Ошибка публикации в Telegraph.</b> Анализ ({analysis_type}) был выполнен, но не удалось создать страницу."
 
-        # 5. Формирование финального сообщения для Telegram
-        summary_section_key = "РЕЗЮМЕ ТОРГОВЫХ ИДЕЙ:"
-        if "РЕЗЮМЕ ТОП-4 ИДЕЙ:" in stage1_clean:
-            summary_section_key = "РЕЗЮМЕ ТОП-4 ИДЕЙ:"
-
-        try:
-            # Используем BeautifulSoup для надежного извлечения блока с резюме
-            soup = BeautifulSoup(stage1_clean, 'html.parser')
-            summary_header = soup.find('h4', string=re.compile(summary_section_key))
-            summary_list = summary_header.find_next_sibling('ul')
-            summary_html = str(summary_list)
-
-            preview_text = f"<b>{page_title}</b>\n\n<h4>{summary_section_key}</h4>{summary_html}"
-        except (AttributeError, IndexError):
-            preview_text = f"<b>{page_title}</b>\n\n<i>Подробный анализ доступен по ссылке.</i>"
-
-        final_message = f"{preview_text}\n\n<a href='{page_url}'><b>➡️ Читать полный анализ</b></a>"
-
-        return final_message
+        # 5. Возвращаем только URL созданной страницы.
+        # Форматированием сообщения для Telegram теперь занимается хендлер.
+        return page_url
 
     except Exception as e:
         logger.critical(f"Критическая ошибка в 'run_full_analysis': {e}", exc_info=True)
@@ -188,7 +197,7 @@ if __name__ == '__main__':
     logger.info(f"Запуск тестового анализа для {analysis_type_to_test}...")
 
     if analysis_type_to_test in TOPIC_CONFIGS:
-        result_for_bot = run_full_analysis(TOPIC_CONFIGS[analysis_type_to_test])
+        result_for_bot = run_full_analysis(TOPIC_CONFIGS[analysis_type_to_test], analysis_type_to_test)
         logger.info("\n--- РЕЗУЛЬТАТ ДЛЯ ОТПРАВКИ В БОТА ---")
         logger.info(result_for_bot)
     else:

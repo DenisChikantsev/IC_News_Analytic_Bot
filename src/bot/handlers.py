@@ -2,6 +2,8 @@ import telebot
 from telebot.apihelper import ApiTelegramException
 from src.config import BOT_TOKEN, CHAT_ID, TOPIC_CONFIGS, ADMIN_ID
 from src.engine.analyzer import run_full_analysis
+from datetime import datetime
+import threading
 import logging
 
 logger = logging.getLogger(__name__)
@@ -83,9 +85,10 @@ def send_welcome(message):
 
 @bot.message_handler(commands=['run_analysis'])
 def analysis_handler(message):
-    if message.from_user.id != ADMIN_ID:
-        return
     """Запускает полный цикл анализа вручную для указанного типа."""
+    if message.from_user.id != int(ADMIN_ID):
+        logger.warning(f"Попытка несанкционированного доступа к /run_analysis от user_id: {message.from_user.id}")
+        return
     args = message.text.split()
     if len(args) < 2:
         bot.reply_to(message, "Пожалуйста, укажите тип анализа.\n"
@@ -109,15 +112,46 @@ def analysis_handler(message):
     bot.reply_to(message, f"⏳ Начинаю анализ '{analysis_type}'... Это может занять несколько минут.")
     logger.info(f"Ручной запуск анализа '{analysis_type}' по команде /run_analysis")
 
-    try:
-        report = run_full_analysis(analysis_config)
-        bot.reply_to(message, f"✅ Анализ '{analysis_type}' завершен, отправляю отчет в целевой топик.")
+    # Запускаем тяжелую задачу в отдельном потоке, чтобы не блокировать бота
+    thread = threading.Thread(target=_run_analysis_in_thread,
+                              args=(message, analysis_config, analysis_type, topic_id))
+    thread.start()
 
-        send_report([report], CHAT_ID, topic_id)
+
+def _run_analysis_in_thread(message, analysis_config, analysis_type, topic_id):
+    """Эта функция выполняется в отдельном потоке для анализа."""
+    try:
+        # 1. Получаем URL статьи от анализатора
+        telegraph_url = run_full_analysis(analysis_config, analysis_type)
+
+        # Проверяем, не вернул ли анализатор сообщение об ошибке вместо URL
+        if not telegraph_url.startswith("http"):
+            error_message = f"❌ Произошла ошибка во время анализа '{analysis_type}':\n{telegraph_url}"
+            logger.error(error_message)
+            bot.reply_to(message, error_message, parse_mode="HTML")
+            return
+
+        # 2. Формируем новое сообщение с дисклеймером
+        current_time = datetime.now().strftime('%d.%m.%Y %H:%M')
+        disclaimer = (
+            f"\n\n—\n"
+            f"<i><b>⚠️ Дисклеймер:</b> Данный анализ сгенерирован автоматически и не является "
+            f"инвестиционной рекомендацией. Инвестиции сопряжены с риском. "
+            f"Принимайте решения обдуманно.</i>\n\n"
+            f"<code>Отчет сформирован: {current_time}</code>"
+        )
+        report_message = (
+            f"<b>Анализ по теме: {analysis_type}</b>\n\n"
+            f"<a href='{telegraph_url}'><b>➡️ Читать полный анализ</b></a>"
+            f"{disclaimer}"
+        )
+
+        bot.reply_to(message, f"✅ Анализ '{analysis_type}' завершен, отправляю отчет в целевой топик.")
+        send_report([report_message], CHAT_ID, topic_id)
 
     except Exception as e:
         logger.error(f"Ошибка при выполнении ручного анализа '{analysis_type}': {e}", exc_info=True)
-        bot.reply_to(message, f"❌ Произошла ошибка во время анализа '{analysis_type}': {e}")
+        bot.reply_to(message, f"❌ Критическая ошибка в потоке анализа '{analysis_type}': {e}")
 
 
 @bot.message_handler(content_types=['text', 'photo', 'video', 'document', 'sticker'])
